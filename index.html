@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <!-- 2. セーフエリア対応: viewport-fit=cover を追加 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    
+    <!-- 3. PWA化: フルスクリーン対応 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#87CEEB">
+    <title>ピヨ飯</title>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #87CEEB;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            touch-action: none; /* スクロール無効化 */
+            user-select: none;
+            -webkit-user-select: none;
+            /* ノッチ対策の背景色拡張 */
+            height: 100vh;
+            width: 100vw;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #startScreen, #gameOverScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.95);
+            z-index: 10;
+            /* セーフエリアを考慮したパディング */
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: env(safe-area-inset-bottom);
+            box-sizing: border-box;
+        }
+        h1 {
+            font-size: 42px;
+            margin-bottom: 10px;
+            color: #333;
+            text-align: center;
+            font-weight: 800;
+        }
+        p {
+            font-size: 16px;
+            color: #555;
+            text-align: center;
+            line-height: 1.6;
+        }
+        .instructions {
+            background: #fff;
+            padding: 20px;
+            border-radius: 16px;
+            border: 1px solid #ddd;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            max-width: 85%;
+        }
+        button {
+            padding: 16px 48px;
+            font-size: 22px;
+            background-color: #ffcc00;
+            border: none;
+            border-radius: 50px; /* iOSらしい丸み */
+            cursor: pointer;
+            font-weight: bold;
+            color: #333;
+            box-shadow: 0 4px 0 #d4a000;
+            transition: transform 0.1s;
+            -webkit-tap-highlight-color: transparent; /* タップ時の灰色背景を消す */
+        }
+        button:active {
+            transform: scale(0.95);
+            box-shadow: 0 2px 0 #d4a000;
+        }
+        .hidden {
+            display: none !important;
+        }
+        #feverIndicator {
+            position: absolute;
+            top: calc(150px + env(safe-area-inset-top)); /* ノッチを避ける */
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 40px;
+            font-weight: bold;
+            color: #ff0055;
+            text-shadow: 2px 2px 0 #fff;
+            display: none;
+            pointer-events: none;
+            animation: pulse 0.3s infinite alternate;
+            width: 100%;
+            text-align: center;
+        }
+        @keyframes pulse {
+            from { transform: translateX(-50%) scale(1); }
+            to { transform: translateX(-50%) scale(1.2); }
+        }
+
+        /* 音量ボタン */
+        #soundToggle {
+            position: absolute;
+            top: max(20px, env(safe-area-inset-top));
+            left: max(20px, env(safe-area-inset-left));
+            font-size: 30px;
+            background: none;
+            border: none;
+            box-shadow: none;
+            padding: 10px;
+            z-index: 20;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+    <div id="feverIndicator">🔥 FEVER TIME! 🔥</div>
+    <button id="soundToggle" onclick="toggleSound()">🔇</button>
+
+    <!-- スタート画面 -->
+    <div id="startScreen">
+        <h1>ピヨ飯</h1>
+        <div class="instructions">
+            <p>
+                👈 <b>スワイプ</b> で移動<br>
+                👆 <b>タップ</b> でジャンプ<br>
+                <br>
+                <span style="color:#ff0055; font-weight:bold;">重要:</span><br>
+                地面にいると食べ物は取れません！<br>
+                <b>ジャンプして体当たり</b>で打ち返そう！<br>
+                <br>
+                🍙:回復　🌶️:シビれる
+            </p>
+        </div>
+        <button onclick="startGame()">スタート！</button>
+        <p style="font-size: 12px; margin-top:15px; color:#999;">ホーム画面に追加すると全画面で遊べます</p>
+    </div>
+
+    <!-- ゲームオーバー画面 -->
+    <div id="gameOverScreen" class="hidden">
+        <h1>おなかいっぱい...</h1>
+        <p style="font-size: 24px; font-weight:bold;">スコア: <span id="finalScore">0</span></p>
+        <p>育てたニワトリ: <span id="chickenCount">0</span> 羽</p>
+        <br>
+        <button onclick="resetGame()">もう一回！</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const feverText = document.getElementById('feverIndicator');
+        const soundBtn = document.getElementById('soundToggle');
+
+        // ゲーム状態
+        let gameState = 'start'; 
+        let score = 0;
+        let chickensGrown = 0;
+        let maxHealth = 100;
+        let health = 100;
+        let frameCount = 0;
+        let feverTimer = 0;
+        const FEVER_DURATION = 300; 
+
+        // 1. Retinaディスプレイ対応
+        let dpr = window.devicePixelRatio || 1;
+        let width, height;
+
+        function resize() {
+            // 画面の論理サイズを取得
+            width = window.innerWidth;
+            height = window.innerHeight;
+
+            // Canvasの物理サイズをdpr倍にする
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+
+            // CSS上のサイズは論理サイズに合わせる
+            canvas.style.width = width + "px";
+            canvas.style.height = height + "px";
+
+            // 描画コンテキストを拡大して、座標計算を変えなくて済むようにする
+            ctx.scale(dpr, dpr);
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // 定数（Y座標は関数で動的に取得するが、Retina対応によりロジックはそのまま）
+        const GRAVITY = 0.6;
+        const GROUND_OFFSET = 100; // 下のUIスペース確保用に少し上げる
+        const GROUND_Y = () => height - GROUND_OFFSET; // ノッチ等を考慮して少し上に
+        const CHICK_ZONE_TOP = 80;
+        const CHICK_ZONE_BOTTOM = 200;
+
+        // アセット
+        const NORMAL_FOODS = ['🍎', '🍖', '🍩', '🥕', '🥖', '🥦', '🍕'];
+        const FOOD_SIZE_BASE = 50;
+        const CLOUDS = [
+            {x: 50, y: 80, w: 140, h: 70, speed: 0.3},
+            {x: 300, y: 150, w: 180, h: 90, speed: 0.2},
+            {x: 600, y: 100, w: 120, h: 60, speed: 0.4},
+            {x: 800, y: 200, w: 200, h: 100, speed: 0.25}
+        ];
+
+        // プレイヤー
+        const player = {
+            x: 0, y: 0, vx: 0, vy: 0,
+            width: 40, height: 80,
+            grounded: false, stunned: false, stunTimer: 0,
+            color: '#333'
+        };
+
+        let chicks = [];
+        let items = [];
+        let enemies = [];
+        let particles = [];
+        let floatingTexts = [];
+
+        // 5. サウンド機能（Web Audio API）
+        let audioCtx = null;
+        let isMuted = true;
+
+        function initAudio() {
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function toggleSound() {
+            isMuted = !isMuted;
+            soundBtn.innerText = isMuted ? "🔇" : "🔊";
+            if (!isMuted) initAudio();
+        }
+
+        function playSound(type) {
+            if (isMuted || !audioCtx) return;
+            
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+
+            if (type === 'jump') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(150, now);
+                osc.frequency.exponentialRampToValueAtTime(600, now + 0.1);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now);
+                osc.stop(now + 0.1);
+            } else if (type === 'hit') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(400, now);
+                osc.frequency.linearRampToValueAtTime(800, now + 0.05);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now);
+                osc.stop(now + 0.1);
+            } else if (type === 'damage') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, now);
+                osc.frequency.linearRampToValueAtTime(50, now + 0.3);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            } else if (type === 'heal') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(500, now);
+                osc.frequency.setValueAtTime(800, now + 0.1);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.3);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            } else if (type === 'feed') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(800, now);
+                osc.frequency.exponentialRampToValueAtTime(1200, now + 0.2);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.2);
+                osc.start(now);
+                osc.stop(now + 0.2);
+            }
+        }
+
+
+        function init() {
+            // 画面サイズ再取得（回転対応）
+            resize();
+            player.x = width / 2;
+            player.y = GROUND_Y();
+            player.vx = 0;
+            player.vy = 0;
+            player.stunned = false;
+            
+            items = [];
+            particles = [];
+            enemies = [];
+            floatingTexts = [];
+            chicks = [];
+
+            const chickCount = 3 + Math.floor(Math.random() * 2);
+            for(let i=0; i<chickCount; i++) {
+                spawnChick(i);
+            }
+
+            score = 0;
+            chickensGrown = 0;
+            health = 100;
+            frameCount = 0;
+            feverTimer = 0;
+        }
+
+        function spawnChick(index) {
+            const isUpper = index % 2 === 0;
+            // 上下に少しランダム性を持たせる
+            const yBase = isUpper ? CHICK_ZONE_TOP : CHICK_ZONE_BOTTOM;
+            const yPos = yBase + Math.random() * 40;
+            
+            chicks.push({
+                x: Math.random() * (width - 100) + 50,
+                y: yPos,
+                targetX: Math.random() * (width - 100) + 50,
+                row: isUpper ? 'upper' : 'lower',
+                stage: 0, 
+                emoji: '🐣',
+                scale: 1.0,
+                dy: 0 
+            });
+        }
+
+        function startGame() {
+            if (!isMuted) initAudio();
+            document.getElementById('startScreen').classList.add('hidden');
+            document.getElementById('gameOverScreen').classList.add('hidden');
+            init();
+            gameState = 'playing';
+            loop();
+        }
+
+        function resetGame() {
+            startGame();
+        }
+
+        function gameOver() {
+            gameState = 'gameover';
+            document.getElementById('finalScore').innerText = score;
+            document.getElementById('chickenCount').innerText = chickensGrown;
+            document.getElementById('gameOverScreen').classList.remove('hidden');
+            feverText.style.display = 'none';
+        }
+
+        // --- 入力処理 ---
+        let touchStartX = 0;
+        let touchStartY = 0; // 縦スワイプ検知用（誤爆防止）
+        
+        canvas.addEventListener('touchstart', (e) => {
+            if (gameState !== 'playing') return;
+            // e.preventDefault(); // ここでは全部止めない（ピンチズームなどはmetaで防ぐ）
+            const touch = e.touches[0];
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+        }, {passive: false});
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (gameState !== 'playing') return;
+            if (player.stunned) return;
+            e.preventDefault(); // スクロール防止
+            
+            const touch = e.touches[0];
+            const diffX = touch.clientX - touchStartX;
+
+            // 地面ではスワイプに合わせて移動（力を加える）
+            if (player.grounded) {
+                player.vx += diffX * 0.18; // 感度調整
+                
+                // 速度制限
+                if (player.vx > 13) player.vx = 13;
+                if (player.vx < -13) player.vx = -13;
+            } else {
+                // 空中制御
+                player.vx += diffX * 0.08;
+            }
+
+            touchStartX = touch.clientX; // 差分計算用に更新
+        }, {passive: false});
+
+        canvas.addEventListener('touchend', (e) => {
+            if (gameState !== 'playing') return;
+            if (player.stunned) return;
+            // e.preventDefault(); // ボタンが押せなくなるのを防ぐためここでは呼ばない
+            
+            // ジャンプ操作
+            if (player.grounded) {
+                const touch = e.changedTouches[0];
+                
+                // 縦移動が大きすぎる（スクロール動作っぽい）場合はジャンプしない判定を入れると丁寧だが
+                // このゲームはタップ＝ジャンプなのでシンプルに実装
+                
+                const diffX = touch.clientX - touchStartX;
+                
+                // 縦方向へのジャンプ
+                player.vy = -19; // 少し高く
+                player.grounded = false;
+                playSound('jump');
+
+                // 横方向ブースト
+                let jumpBoost = diffX * 0.3; 
+                if (jumpBoost > 10) jumpBoost = 10;
+                if (jumpBoost < -10) jumpBoost = -10;
+                
+                player.vx += jumpBoost;
+
+                createParticles(player.x, player.y + 40, 5, '#ccc');
+            }
+        }, {passive: false});
+
+
+        function loop() {
+            if (gameState !== 'playing') return;
+            ctx.clearRect(0, 0, width, height);
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        function update() {
+            frameCount++;
+
+            if (feverTimer > 0) {
+                feverTimer--;
+                feverText.style.display = 'block';
+            } else {
+                feverText.style.display = 'none';
+            }
+
+            // --- プレイヤー物理演算 ---
+            if (player.stunned) {
+                player.stunTimer--;
+                if (player.stunTimer <= 0) player.stunned = false;
+            }
+
+            player.vy += GRAVITY;
+            player.x += player.vx;
+            player.y += player.vy;
+
+            // 摩擦
+            if (player.grounded) {
+                player.vx *= 0.82; // 少し止まりやすく
+            } else {
+                player.vx *= 0.95; 
+            }
+            if (Math.abs(player.vx) < 0.1) player.vx = 0;
+
+            // 壁制限
+            if (player.x < 20) {
+                player.x = 20;
+                player.vx *= -0.5;
+            }
+            if (player.x > width - 20) {
+                player.x = width - 20;
+                player.vx *= -0.5;
+            }
+
+            // 着地
+            if (player.y > GROUND_Y()) {
+                player.y = GROUND_Y();
+                player.vy = 0;
+                player.grounded = true;
+            }
+
+            // --- ヒヨコ処理 ---
+            chicks.forEach((c) => {
+                if (c.stage >= 3) {
+                     c.y -= 5;
+                     c.x += Math.sin(frameCount * 0.1) * 2;
+                     if (c.y < -100) {
+                         score += 500;
+                         chickensGrown++;
+                         showFloatText(c.x, 100, "出荷! +500", "#FFD700");
+                         playSound('feed');
+                         c.stage = 0;
+                         c.emoji = '🐣';
+                         c.y = (c.row === 'upper' ? CHICK_ZONE_TOP : CHICK_ZONE_BOTTOM) + Math.random()*40;
+                         c.scale = 1.0;
+                     }
+                     return;
+                }
+                const dx = c.targetX - c.x;
+                c.x += dx * 0.01;
+                if (Math.abs(dx) < 10 && Math.random() < 0.02) {
+                    c.targetX = Math.random() * (width - 100) + 50;
+                }
+                if (c.stage === 0) c.emoji = '🐣';
+                if (c.stage === 1) c.emoji = '🐥';
+                if (c.stage === 2) c.emoji = '🐔';
+            });
+
+            // --- スポーン ---
+            let spawnRate = feverTimer > 0 ? 15 : 50; 
+            if (frameCount % spawnRate === 0) spawnItem();
+            if (frameCount % 200 === 0 && Math.random() < 0.7) spawnEnemy();
+
+            // --- アイテム衝突（くっつき防止） ---
+            for (let i = 0; i < items.length; i++) {
+                for (let j = i + 1; j < items.length; j++) {
+                    let it1 = items[i];
+                    let it2 = items[j];
+                    let dx = it1.x - it2.x;
+                    let dy = it1.y - it2.y;
+                    let dist = Math.hypot(dx, dy);
+                    let minDist = 60; 
+
+                    if (dist < minDist) {
+                        let angle = Math.atan2(dy, dx);
+                        let overlap = minDist - dist;
+                        let moveX = (Math.cos(angle) * overlap) * 0.5;
+                        let moveY = (Math.sin(angle) * overlap) * 0.5;
+                        it1.x += moveX; it1.y += moveY;
+                        it2.x -= moveX; it2.y -= moveY;
+                        
+                        let speed1 = Math.hypot(it1.vx, it1.vy);
+                        let speed2 = Math.hypot(it2.vx, it2.vy);
+                        let avgSpeed = (speed1 + speed2) * 0.5 + 2;
+                        it1.vx = Math.cos(angle) * avgSpeed;
+                        it1.vy = Math.sin(angle) * avgSpeed;
+                        it2.vx = -Math.cos(angle) * avgSpeed;
+                        it2.vy = -Math.sin(angle) * avgSpeed;
+                    }
+                }
+            }
+
+            // --- アイテム更新 ---
+            for (let i = items.length - 1; i >= 0; i--) {
+                let it = items[i];
+                
+                it.vy += GRAVITY * 0.3; 
+                if(it.vy > 6) it.vy = 6; 
+                it.x += it.vx;
+                it.y += it.vy;
+                it.rot += it.rotSpeed;
+
+                if (it.x < 25) {
+                    it.x = 25;
+                    it.vx *= -0.8;
+                }
+                if (it.x > width - 25) {
+                    it.x = width - 25;
+                    it.vx *= -0.8;
+                }
+
+                if (it.y > height + 50) {
+                    items.splice(i, 1);
+                    continue;
+                }
+
+                // プレイヤーとの当たり判定
+                if (!player.grounded && !player.stunned) {
+                    const distX = Math.abs(player.x - it.x);
+                    const distY = Math.abs((player.y - player.height/2) - it.y);
+                    
+                    if (distX < 50 && distY < 60) {
+                        
+                        if (it.type === 'pepper') {
+                            player.stunned = true;
+                            player.stunTimer = 90;
+                            health -= 10;
+                            playSound('damage');
+                            createParticles(player.x, player.y, 10, '#FF0000');
+                            showFloatText(player.x, player.y - 60, "しびれた!!", "red");
+                            items.splice(i, 1);
+                            if (health <= 0) gameOver();
+                            continue;
+                        }
+
+                        if (it.type === 'onigiri') {
+                            health = Math.min(health + 20, maxHealth);
+                            playSound('heal');
+                            createParticles(it.x, it.y, 15, '#fff');
+                            showFloatText(it.x, it.y, "回復!", "#00AA00");
+                            if (Math.random() < 0.1) {
+                                feverTimer = FEVER_DURATION;
+                                showFloatText(width/2, height/2, "FEVER START!", "#FF0055");
+                            }
+                            items.splice(i, 1);
+                            continue;
+                        }
+
+                        if (NORMAL_FOODS.includes(it.type)) {
+                            if (it.vy > 0) { // 落ちてくるときだけ
+                                playSound('hit');
+                                it.vy = -14 - Math.random() * 4; 
+                                it.vx = (Math.random() - 0.5) * 8 + (player.vx * 0.5); // プレイヤーの慣性を強めに反映
+                                
+                                health -= 2; 
+                                createParticles(it.x, it.y, 5, 'orange');
+                                 if (health <= 0) {
+                                    health = 0;
+                                    gameOver();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ヒヨコとの当たり判定
+                if (it.vy < 0 && NORMAL_FOODS.includes(it.type)) {
+                    for (let c of chicks) {
+                        if (c.stage >= 3) continue;
+                        const cDist = Math.hypot(c.x - it.x, c.y - it.y);
+                        if (cDist < 80) {
+                            score += 100;
+                            items.splice(i, 1);
+                            playSound('feed');
+                            createParticles(c.x, c.y, 10, '#FFFF00');
+                            showFloatText(c.x, c.y - 40, "うまーい", "#333");
+                            c.stage++;
+                            c.scale = 1.5; 
+                            setTimeout(() => c.scale = 1.0, 200);
+                            if (c.stage >= 3) c.emoji = '🐓';
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // --- 敵更新 ---
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let e = enemies[i];
+                e.life--;
+                
+                if (e.type === 'bee') {
+                    e.x += e.vx;
+                    e.y = e.baseY + Math.sin(frameCount * 0.1) * 40;
+                } else if (e.type === 'dog') {
+                    e.x += e.vx;
+                    if (e.y >= GROUND_Y()) e.vy = -8;
+                    e.vy += GRAVITY;
+                    e.y += e.vy;
+                    if (e.y > GROUND_Y()) e.y = GROUND_Y();
+                }
+
+                if (e.x < -100 || e.x > width + 100) {
+                    enemies.splice(i, 1);
+                    continue;
+                }
+
+                if (!player.stunned) {
+                    const ex = e.type === 'dog' ? e.x : e.x;
+                    const ey = e.type === 'dog' ? e.y - 20 : e.y;
+                    const dist = Math.hypot(player.x - ex, (player.y - 40) - ey);
+                    
+                    if (dist < 50) {
+                        health -= 15;
+                        player.stunned = true;
+                        player.stunTimer = 30;
+                        playSound('damage');
+                        player.vx = e.vx > 0 ? 10 : -10;
+                        createParticles(player.x, player.y, 10, '#880000');
+                        showFloatText(player.x, player.y - 50, "痛ッ!!", "red");
+                        enemies.splice(i, 1);
+                        if (health <= 0) {
+                            health = 0;
+                            gameOver();
+                        }
+                    }
+                }
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life--;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+
+            CLOUDS.forEach(c => {
+                c.x += c.speed;
+                if (c.x > width + 150) c.x = -200;
+            });
+
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                let t = floatingTexts[i];
+                t.y -= 1;
+                t.life--;
+                if (t.life <= 0) floatingTexts.splice(i, 1);
+            }
+        }
+
+        function draw() {
+            drawClouds();
+            // 地面
+            ctx.fillStyle = '#8BC34A'; 
+            ctx.fillRect(0, GROUND_Y(), width, height - GROUND_Y());
+            ctx.strokeStyle = '#558B2F';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.moveTo(0, GROUND_Y());
+            ctx.lineTo(width, GROUND_Y());
+            ctx.stroke();
+
+            chicks.forEach(c => {
+                ctx.save();
+                ctx.translate(c.x, c.y);
+                if (c.scale !== 1.0) ctx.scale(c.scale, c.scale);
+                let size = 60;
+                if (c.stage === 0) size = 50;
+                if (c.stage === 1) size = 70;
+                if (c.stage === 2) size = 80;
+                if (c.stage >= 3) size = 90;
+                ctx.font = size + 'px serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(c.emoji, 0, 0);
+                ctx.restore();
+            });
+
+            enemies.forEach(e => {
+                ctx.save();
+                ctx.translate(e.x, e.y);
+                if (e.vx > 0) ctx.scale(-1, 1);
+                ctx.font = '60px serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(e.emoji, 0, 0);
+                ctx.restore();
+            });
+
+            drawPlayer();
+
+            items.forEach(it => {
+                ctx.save();
+                ctx.translate(it.x, it.y);
+                ctx.rotate(it.rot);
+                ctx.font = (it.type === 'onigiri' ? 60 : FOOD_SIZE_BASE) + 'px serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                if (player.grounded && it.y > player.y - 100 && Math.abs(player.x - it.x) < 80) {
+                     ctx.globalAlpha = 0.6;
+                }
+                ctx.fillText(it.emoji, 0, 0);
+                ctx.globalAlpha = 1.0;
+                ctx.restore();
+            });
+
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.size, p.size);
+            });
+
+            floatingTexts.forEach(t => {
+                ctx.font = 'bold 24px sans-serif';
+                ctx.fillStyle = t.color;
+                ctx.strokeStyle = 'white';
+                ctx.lineWidth = 3;
+                ctx.strokeText(t.text, t.x, t.y);
+                ctx.fillText(t.text, t.x, t.y);
+            });
+
+            drawUI();
+        }
+
+        function spawnItem() {
+            const rand = Math.random();
+            let type, emoji;
+            
+            if (rand < 0.1) { 
+                type = 'pepper';
+                emoji = '🌶️';
+            } else if (rand < 0.2) { 
+                type = 'onigiri';
+                emoji = '🍙';
+            } else {
+                type = NORMAL_FOODS[Math.floor(Math.random() * NORMAL_FOODS.length)];
+                emoji = type; 
+            }
+
+            items.push({
+                x: Math.random() * (width - 60) + 30,
+                y: -60,
+                vx: 0, vy: 0,
+                rot: 0, rotSpeed: (Math.random() - 0.5) * 0.1,
+                type: type, emoji: emoji
+            });
+        }
+
+        function spawnEnemy() {
+            const isLeft = Math.random() > 0.5;
+            const startX = isLeft ? -50 : width + 50;
+            const speed = isLeft ? (Math.random() * 2 + 3) : -(Math.random() * 2 + 3);
+            
+            if (Math.random() > 0.5) {
+                enemies.push({
+                    type: 'dog', emoji: '🐕',
+                    x: startX, y: GROUND_Y(),
+                    baseY: GROUND_Y(),
+                    vx: speed * 1.5, vy: 0, life: 600
+                });
+            } else {
+                const beeY = GROUND_Y() - 130;
+                enemies.push({
+                    type: 'bee', emoji: '🐝',
+                    x: startX, y: beeY,
+                    baseY: beeY + (Math.random() * 40),
+                    vx: speed, vy: 0, life: 600
+                });
+            }
+        }
+
+        function drawPlayer() {
+            const x = player.x;
+            const y = player.y;
+            
+            ctx.strokeStyle = player.color;
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            if (player.stunned) {
+                ctx.strokeStyle = (Math.floor(frameCount / 4) % 2 === 0) ? '#FFFF00' : '#333';
+                if (Math.random() < 0.3) ctx.translate((Math.random()-0.5)*4, 0); 
+            }
+
+            // 体
+            ctx.beginPath();
+            ctx.moveTo(x, y); 
+            ctx.lineTo(x, y - 50); 
+            ctx.stroke();
+
+            // 足
+            ctx.beginPath();
+            if (player.grounded) {
+                ctx.moveTo(x, y); ctx.lineTo(x - 10, y + 20);
+                ctx.moveTo(x, y); ctx.lineTo(x + 10, y + 20);
+            } else {
+                ctx.moveTo(x, y); ctx.lineTo(x - 15, y + 10);
+                ctx.moveTo(x, y); ctx.lineTo(x + 15, y + 20);
+            }
+            ctx.stroke();
+
+            // 手
+            ctx.beginPath();
+            if (player.stunned) {
+                ctx.moveTo(x, y - 35); ctx.lineTo(x - 15, y - 10);
+                ctx.moveTo(x, y - 35); ctx.lineTo(x + 15, y - 10);
+            } else {
+                ctx.moveTo(x, y - 35); ctx.lineTo(x - 20, y - 20);
+                ctx.moveTo(x, y - 35); ctx.lineTo(x + 20, y - 50); 
+            }
+            ctx.stroke();
+
+            // 頭
+            ctx.beginPath();
+            ctx.arc(x, y - 60, 15, 0, Math.PI * 2);
+            ctx.fillStyle = player.stunned ? '#E0E0E0' : '#FFF';
+            ctx.fill();
+            ctx.stroke();
+            
+            if (player.stunned) ctx.setTransform(dpr,0,0,dpr,0,0);
+        }
+
+        function drawClouds() {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+            CLOUDS.forEach(c => {
+                ctx.beginPath();
+                ctx.ellipse(c.x, c.y, c.w, c.h, 0, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function drawUI() {
+            // セーフエリア対応（上部のUIを少し下げる）
+            const topMargin = 50; 
+            const rightMargin = 20;
+
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 30px sans-serif';
+            ctx.textAlign = 'right';
+            ctx.fillText("Score: " + score, width - rightMargin, topMargin);
+
+            const barX = 60;
+            const barY = topMargin - 20;
+            const barW = 200;
+            const barH = 20;
+
+            ctx.font = '30px serif';
+            ctx.textAlign = 'left';
+            ctx.fillText('💪', 10, topMargin);
+
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(barX, barY, barW, barH);
+            
+            const currentBarW = (health / maxHealth) * barW;
+            if (health > 50) ctx.fillStyle = '#4CAF50';
+            else if (health > 20) ctx.fillStyle = '#FFC107';
+            else ctx.fillStyle = '#F44336';
+            
+            ctx.fillRect(barX, barY, currentBarW, barH);
+            ctx.strokeStyle = '#333';
+            ctx.strokeRect(barX, barY, barW, barH);
+        }
+
+        function createParticles(x, y, count, color) {
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    life: 30, color: color,
+                    size: Math.random() * 5 + 2
+                });
+            }
+        }
+        
+        function showFloatText(x, y, text, color) {
+            floatingTexts.push({
+                x: x, y: y,
+                text: text, color: color, life: 60
+            });
+        }
+    </script>
+</body>
+</html>
