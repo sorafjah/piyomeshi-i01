@@ -11,7 +11,6 @@
 
     <link rel="apple-touch-icon" href="piyolunchqr.png" />
     <link rel="icon" type="image/png" href="piyolunchqr.png" />
-    <!-- アイコンなどのマニフェスト（変更なし） -->
     <link rel="manifest" href="data:application/json;charset=utf-8,%7B%22name%22%3A%22%E3%81%B4%E3%82%88%E3%83%A9%E3%83%B3%E3%83%81%F0%9F%90%A4%22%2C%22short_name%22%3A%22%E3%81%B4%E3%82%88%E3%83%A9%E3%83%B3%E3%83%81%F0%9F%90%A4%22%2C%22start_url%22%3A%22.%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%2387CEEB%22%2C%22theme_color%22%3A%22%2387CEEB%22%2C%22icons%22%3A%5B%7B%22src%22%3A%22piyolunchqr.png%22%2C%22sizes%22%3A%22192x192%22%2C%22type%22%3A%22image%2Fpng%22%7D%2C%7B%22src%22%3A%22piyolunchqr.png%22%2C%22sizes%22%3A%22512x512%22%2C%22type%22%3A%22image%2Fpng%22%7D%5D%7D" />
 
     <style>
@@ -25,13 +24,16 @@
             -webkit-user-select: none;
             height: 100vh;
             width: 100vw;
-            overscroll-behavior: none; /* バウンス防止 */
+            overscroll-behavior: none;
             -webkit-tap-highlight-color: transparent;
         }
         canvas {
             display: block;
             width: 100%;
             height: 100%;
+            /* GPU合成を促進させる設定 */
+            will-change: transform;
+            transform: translateZ(0);
         }
         #startScreen,
         #gameOverScreen {
@@ -144,18 +146,21 @@
     </div>
 
     <script>
-        // Service Worker (キャッシュ用)
+        // Service Worker
         if ("serviceWorker" in navigator) {
             window.addEventListener("load", function () {
                 navigator.serviceWorker.register(
-                    "data:application/javascript;charset=utf-8,self.addEventListener%28%27install%27%2C%20function%28e%29%20%7B%20e.waitUntil%28%20caches.open%28%27piyolunch-v2%27%29.then%28function%28cache%29%20%7B%20return%20cache.addAll%28%5B%20%27.%2F%27%2C%20%27index.html%27%2C%20%27piyolunchqr.png%27%20%5D%29%3B%20%7D%29%20%29%3B%7D%29%3B"
+                    "data:application/javascript;charset=utf-8,self.addEventListener%28%27install%27%2C%20function%28e%29%20%7B%20e.waitUntil%28%20caches.open%28%27piyolunch-v3%27%29.then%28function%28cache%29%20%7B%20return%20cache.addAll%28%5B%20%27.%2F%27%2C%20%27index.html%27%2C%20%27piyolunchqr.png%27%20%5D%29%3B%20%7D%29%20%29%3B%7D%29%3B"
                 ).catch(function (err) {});
             });
         }
 
         const canvas = document.getElementById("gameCanvas");
-        // 安全のため alpha: false を削除 (これが原因で黒/青画面になる環境があるため)
-        const ctx = canvas.getContext("2d"); 
+        
+        // ★高速化設定の復活
+        // 透明度計算を無効化して描画負荷を下げます。
+        // これを有効にする場合は、draw()関数内で必ず全画面を塗りつぶす必要があります（後述）。
+        const ctx = canvas.getContext("2d", { alpha: false }); 
 
         let gameState = "start";
         let score = 0;
@@ -166,15 +171,14 @@
         let feverTimer = 0;
         const FEVER_DURATION = 1200;
         
-        // 画面サイズ管理
         let width, height;
-        let dpr = window.devicePixelRatio || 1;
-        // 重い場合は1に固定するが、最近のスマホなら多少高くても大丈夫
-        // 重いと感じたらここを dpr = 1; にしてください
-        if (dpr > 2) dpr = 2; 
+        
+        // ★最重要修正: 解像度（dpr）を強制的に「1」にします。
+        // スマホ（特にiPhone）の高解像度ディスプレイでCanvasを動かすと、
+        // ピクセル数が多すぎてGPU負荷が激増し、カクつきの原因になります。
+        // 1にすることで描画ピクセル数を劇的に減らし、動作を軽量化します。
+        let dpr = 1; 
 
-        // ★絵文字キャッシュシステム（遅延生成版）
-        // メモリ不足クラッシュを防ぐため、必要な時に初めて生成します
         const emojiCache = {};
         function getEmojiImage(emoji, size) {
             const key = emoji + '_' + size;
@@ -182,28 +186,28 @@
 
             const c = document.createElement('canvas');
             const s = Math.ceil(size * 1.3); 
-            c.width = s * dpr; // 解像度対応
-            c.height = s * dpr;
+            c.width = s; // dpr=1なのでそのまま
+            c.height = s;
             const cx = c.getContext('2d');
-            cx.scale(dpr, dpr);
+            // cx.scaleは不要（dpr=1のため）
             
             cx.font = size + "px serif";
             cx.textAlign = "center";
             cx.textBaseline = "middle";
             cx.fillText(emoji, s/2, s/2 + size * 0.05);
 
-            emojiCache[key] = { canvas: c, w: s, h: s }; // サイズ情報も保存
+            emojiCache[key] = { canvas: c, w: s, h: s };
             return emojiCache[key];
         }
 
         function resize() {
             width = window.innerWidth;
             height = window.innerHeight;
-            canvas.width = width * dpr;
-            canvas.height = height * dpr;
+            canvas.width = width; // dpr倍しない
+            canvas.height = height;
             canvas.style.width = width + "px";
             canvas.style.height = height + "px";
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            // setTransformも不要（デフォルトのまま）
         }
         
         let resizeTimeout;
@@ -664,8 +668,9 @@
         }
 
         function draw() {
-            // ★最重要修正: clearRectではなく、空の青色を描画します。
-            // これにより「透明になって背景だけ見える」現象を防ぎます
+            // ★重要: alpha: false にしているため、必ず全画面を不透明色で塗りつぶす必要があります。
+            // これをしないと、透明部分が正しくクリアされず、前のフレームが残ったり、
+            // 背景色の青だけが見えてCanvasが消えたように見えたり（前回のバグ）します。
             ctx.fillStyle = "#87ceeb";
             ctx.fillRect(0, 0, width, height);
 
@@ -704,7 +709,6 @@
                 ctx.translate(c.x, c.y);
                 ctx.scale(1, c.scale);
                 const data = getEmojiImage(c.emoji, 35);
-                // 描画位置調整
                 ctx.drawImage(data.canvas, -data.w/2, -data.h + 5, data.w, data.h);
                 ctx.restore();
             });
@@ -742,7 +746,7 @@
                 ctx.fillRect(p.x, p.y, p.size, p.size);
             });
 
-            // テキスト（影付きで軽量化）
+            // テキスト
             ctx.font = "bold 14px sans-serif";
             floatingTexts.forEach((t) => {
                 ctx.fillStyle = "white";
