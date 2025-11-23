@@ -1,4 +1,4 @@
-const CACHE_NAME = "piyolunch-v1";
+const CACHE_NAME = "piyolunch-v2";
 const ASSETS = [
   "./",
   "./index.html",
