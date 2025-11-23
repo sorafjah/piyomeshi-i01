@@ -226,17 +226,18 @@
             return c;
         }
 
-        function resize() {
-            // 向きが変わったときなども含めて毎回取り直す
-            dpr = Math.min(window.devicePixelRatio || 1, 2);
-            width = window.innerWidth;
-            height = window.innerHeight;
-            canvas.width = width * dpr;
-            canvas.height = height * dpr;
-            canvas.style.width = width + "px";
-            canvas.style.height = height + "px";
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        }
+   function resize() {
+    // パフォーマンス優先で dpr は 1 に固定
+    dpr = 1;
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = width + "px";
+    canvas.style.height = height + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
 
         window.addEventListener("resize", () => {
             if (window.resizeTimeout) clearTimeout(window.resizeTimeout);
