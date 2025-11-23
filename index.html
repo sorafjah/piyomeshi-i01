@@ -174,19 +174,6 @@
     </div>
 
     <script>
-        // Service Workerの登録
-        if ("serviceWorker" in navigator) {
-            window.addEventListener("load", function () {
-                navigator.serviceWorker
-                    .register(
-                        "data:application/javascript;charset=utf-8,self.addEventListener%28%27install%27%2C%20function%28e%29%20%7B%20e.waitUntil%28%20caches.open%28%27piyolunch-v1%27%29.then%28function%28cache%29%20%7B%20return%20cache.addAll%28%5B%20%27.%2F%27%2C%20%27index.html%27%2C%20%27piyolunchqr.png%27%20%5D%29%3B%20%7D%29%20%29%3B%7D%29%3Bself.addEventListener%28%27fetch%27%2C%20function%28e%29%20%7B%20e.respondWith%28%20caches.match%28e.request%29.then%28function%28response%29%20%7B%20return%20response%20%7C%7C%20fetch%28e.request%29%3B%20%7D%29%20%29%3B%7D%29%3B"
-                    )
-                    .catch(function (err) {
-                        // console.log('ServiceWorker registration failed: ', err);
-                    });
-            });
-        }
-
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d", { alpha: false }); // アルファなし指定で高速化
         const feverText = document.getElementById("feverIndicator");
@@ -205,27 +192,27 @@
         let dpr = 1;
         let width, height;
 
-        // ★改善: 絵文字キャッシュシステム
-        // 毎回fillTextを実行するのではなく、一度Canvasに描画して画像として保存します
+        // ループ用タイミング管理
+        let lastTime = 0;
+        let accumulator = 0;
+        const FRAME_DURATION = 1000 / 60; // 60fps 基準
+        const SPEED_SCALE = 0.7; // ← 全体の速さ。0.7でちょいゆっくり
+
+        // ★絵文字キャッシュシステム
         const emojiCache = {};
         function getEmojiImage(emoji, size) {
-            // キーを作成（文字とサイズで一意にする）
             const key = emoji + '_' + size;
-            if (emojiCache[key]) {
-                return emojiCache[key];
-            }
+            if (emojiCache[key]) return emojiCache[key];
 
-            // キャッシュがない場合は生成
             const c = document.createElement('canvas');
-            const s = Math.ceil(size * 1.2); // 少し余裕を持たせる
+            const s = Math.ceil(size * 1.2);
             c.width = s;
             c.height = s;
             const cx = c.getContext('2d');
             cx.font = size + "px serif";
             cx.textAlign = "center";
             cx.textBaseline = "middle";
-            cx.fillText(emoji, s/2, s/2 + size * 0.05); // 垂直位置微調整
-
+            cx.fillText(emoji, s/2, s/2 + size * 0.05);
             emojiCache[key] = c;
             return c;
         }
@@ -240,8 +227,7 @@
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         }
         window.addEventListener("resize", () => {
-            // リサイズイベントの間引き（パフォーマンス対策）
-            if(window.resizeTimeout) clearTimeout(window.resizeTimeout);
+            if (window.resizeTimeout) clearTimeout(window.resizeTimeout);
             window.resizeTimeout = setTimeout(resize, 200);
         });
         resize();
@@ -414,7 +400,9 @@
             document.getElementById("gameOverScreen").classList.add("hidden");
             init();
             gameState = "playing";
-            loop();
+            lastTime = 0;
+            accumulator = 0;
+            requestAnimationFrame(loop);
         }
 
         function resetGame() {
@@ -490,10 +478,26 @@
             { passive: false }
         );
 
-        function loop() {
+        // 固定タイムステップ＋スピード調整付きループ
+        function loop(timestamp) {
             if (gameState !== "playing") return;
+
+            if (!lastTime) lastTime = timestamp;
+            let delta = timestamp - lastTime;
+            lastTime = timestamp;
+
+            // 極端なタブ復帰などでの大きなdeltaは丸める
+            if (delta > 200) delta = 200;
+
+            // SPEED_SCALE で時間の進み自体をゆっくりに
+            accumulator += delta * SPEED_SCALE;
+
+            while (accumulator >= FRAME_DURATION) {
+                update();              // 1フレーム分のゲームロジック
+                accumulator -= FRAME_DURATION;
+            }
+
             ctx.clearRect(0, 0, width, height);
-            update();
             draw();
             requestAnimationFrame(loop);
         }
@@ -856,7 +860,7 @@
             ctx.lineTo(width, GROUND_Y());
             ctx.stroke();
 
-            // ヒヨコ (画像描画に変更)
+            // ヒヨコ
             chicks.forEach((c) => {
                 if (c.state === "waiting") return;
 
@@ -870,42 +874,36 @@
                 if (c.stage === 2) size = 42;
                 if (c.stage >= 3) size = 48;
                 
-                // キャッシュした画像を描画
                 const img = getEmojiImage(c.emoji, size);
-                ctx.drawImage(img, -img.width/2, -img.height/2);
+                ctx.drawImage(img, -img.width / 2, -img.height / 2);
                 
                 ctx.restore();
             });
 
-            // サボテン (画像描画に変更)
+            // サボテン
             cactusList.forEach((c) => {
                 ctx.save();
                 ctx.translate(c.x, c.y);
                 ctx.scale(1, c.scale);
-                
-                // 座標調整: 元のfillText(textBaseline='bottom')に合わせる
                 const img = getEmojiImage(c.emoji, 35);
-                ctx.drawImage(img, -img.width/2, -img.height + 5); 
-                
+                ctx.drawImage(img, -img.width / 2, -img.height + 5); 
                 ctx.restore();
             });
 
-            // 敵 (画像描画に変更)
+            // 敵
             enemies.forEach((e) => {
                 ctx.save();
                 ctx.translate(e.x, e.y);
                 if (e.vx > 0) ctx.scale(-1, 1);
-                
                 const img = getEmojiImage(e.emoji, 30);
-                ctx.drawImage(img, -img.width/2, -img.height/2);
-                
+                ctx.drawImage(img, -img.width / 2, -img.height / 2);
                 ctx.restore();
             });
 
             // プレイヤー
             drawPlayer();
 
-            // 食べ物・おにぎり・唐辛子 (画像描画に変更)
+            // 食べ物など
             items.forEach((it) => {
                 ctx.save();
                 ctx.translate(it.x, it.y);
@@ -918,7 +916,7 @@
                 }
                 
                 const img = getEmojiImage(it.emoji, size);
-                ctx.drawImage(img, -img.width/2, -img.height/2);
+                ctx.drawImage(img, -img.width / 2, -img.height / 2);
 
                 ctx.globalAlpha = 1.0;
                 ctx.restore();
@@ -1104,9 +1102,8 @@
             const barW = 100;
             const barH = 10;
 
-            // 絵文字キャッシュを使って描画
             const img = getEmojiImage("💪", 18);
-            ctx.drawImage(img, 5, topMargin - 18/2 - 5); // 位置微調整
+            ctx.drawImage(img, 5, topMargin - 18 / 2 - 5);
 
             ctx.fillStyle = "#fff";
             ctx.fillRect(barX, barY, barW, barH);
@@ -1146,7 +1143,6 @@
             });
         }
 
-        // 簡単なテスト
         console.assert(typeof startGame === "function", "startGame should be defined");
         console.assert(typeof resetGame === "function", "resetGame should be defined");
     </script>
