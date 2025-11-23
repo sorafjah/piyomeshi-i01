@@ -15,7 +15,7 @@
     <link rel="apple-touch-icon" href="piyolunchqr.png" />
     <link rel="icon" type="image/png" href="piyolunchqr.png" />
 
-    <!-- 外部 manifest に変更 -->
+    <!-- 外部 manifest -->
     <link rel="manifest" href="manifest.json" />
 
     <style>
@@ -34,9 +34,7 @@
             display: block;
             width: 100%;
             height: 100%;
-            /* ハードウェアアクセラレーションを有効化 */
             will-change: transform;
-            /* ゲーム領域でのスクロール・ジェスチャーを抑制 */
             touch-action: none;
         }
         #startScreen,
@@ -175,7 +173,7 @@
     </div>
 
     <script>
-        // Service Workerの登録（data: URL ではなく sw.js を使う）
+        // Service Workerの登録
         if ("serviceWorker" in navigator) {
             window.addEventListener("load", function () {
                 navigator.serviceWorker
@@ -187,7 +185,7 @@
         }
 
         const canvas = document.getElementById("gameCanvas");
-        const ctx = canvas.getContext("2d", { alpha: false }); // アルファなし指定で高速化
+        const ctx = canvas.getContext("2d", { alpha: false });
         const feverText = document.getElementById("feverIndicator");
 
         // ゲーム状態
@@ -200,18 +198,27 @@
         let feverTimer = 0;
         const FEVER_DURATION = 1200;
 
-        // Retina/高DPI対応（ただし負荷を抑えるため最大2倍に制限）
+        // フレームスキップ（実質30fps狙い）
+        let frameSkip = 0;
+
+        // Retina/高DPI対応（パフォーマンス優先で1固定）
         let dpr = 1;
         let width, height;
 
-        // ★改善: 絵文字キャッシュシステム
+        // 軽量化用：同時に出す数の上限
+        const MAX_ITEMS = 10;
+        const MAX_ENEMIES = 5;
+        const MAX_CACTUS = 3;
+        const MAX_PARTICLES = 60;
+        const MAX_FLOAT_TEXTS = 10;
+
+        // 絵文字キャッシュ
         const emojiCache = {};
         function getEmojiImage(emoji, size) {
             const key = emoji + "_" + size;
             if (emojiCache[key]) {
                 return emojiCache[key];
             }
-
             const c = document.createElement("canvas");
             const s = Math.ceil(size * 1.2);
             c.width = s;
@@ -221,30 +228,27 @@
             cx.textAlign = "center";
             cx.textBaseline = "middle";
             cx.fillText(emoji, s / 2, s / 2 + size * 0.05);
-
             emojiCache[key] = c;
             return c;
         }
 
-   function resize() {
-    // パフォーマンス優先で dpr は 1 に固定
-    dpr = 1;
-    width = window.innerWidth;
-    height = window.innerHeight;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    canvas.style.width = width + "px";
-    canvas.style.height = height + "px";
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-}
-
+        function resize() {
+            // パフォーマンス優先で dpr は 1 に固定
+            dpr = 1;
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            canvas.style.width = width + "px";
+            canvas.style.height = height + "px";
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
 
         window.addEventListener("resize", () => {
             if (window.resizeTimeout) clearTimeout(window.resizeTimeout);
             window.resizeTimeout = setTimeout(resize, 200);
         });
 
-        // 画面の向きが変わったとき（iOSでよくずれる箇所）
         window.addEventListener("orientationchange", () => {
             setTimeout(resize, 300);
         });
@@ -265,7 +269,7 @@
             { x: 50, y: 80, w: 80, h: 40, speed: 0.3 },
             { x: 300, y: 150, w: 100, h: 50, speed: 0.2 },
             { x: 600, y: 100, w: 70, h: 35, speed: 0.4 },
-            { x: 800, y: 200, w: 120, h: 60, speed: 0.25 },
+            { x: 800, y: 200, w: 120, h: 60, speed: 0.25 }
         ];
 
         const player = {
@@ -278,7 +282,7 @@
             grounded: false,
             stunned: false,
             stunTimer: 0,
-            color: "#333",
+            color: "#333"
         };
 
         let chicks = [];
@@ -407,7 +411,7 @@
                 emoji: "🐣",
                 scale: 1.0,
                 state: "idle",
-                waitTimer: 0,
+                waitTimer: 0
             });
         }
 
@@ -435,7 +439,7 @@
             feverText.style.display = "none";
         }
 
-        // --- 入力処理 ---
+        // 入力処理
         let touchStartX = 0;
 
         canvas.addEventListener("touchstart", (e) => {
@@ -489,9 +493,15 @@
 
         function loop() {
             if (gameState !== "playing") return;
-            ctx.clearRect(0, 0, width, height);
-            update();
-            draw();
+
+            // 2フレームに1回だけ更新・描画（実質30fps）
+            frameSkip = (frameSkip + 1) % 2;
+            if (frameSkip === 0) {
+                ctx.clearRect(0, 0, width, height);
+                update();
+                draw();
+            }
+
             requestAnimationFrame(loop);
         }
 
@@ -536,7 +546,7 @@
                 player.grounded = true;
             }
 
-            // --- ヒヨコ処理 ---
+            // ヒヨコ処理
             chicks.forEach((c) => {
                 if (c.state === "flying") {
                     c.y -= 4;
@@ -606,33 +616,35 @@
             // サボテン出現
             if (frameCount % 300 === 0 && Math.random() < 0.4) spawnCactus();
 
-            // アイテム同士の簡易反発
-            for (let i = 0; i < items.length; i++) {
-                for (let j = i + 1; j < items.length; j++) {
-                    let it1 = items[i];
-                    let it2 = items[j];
-                    let dx = it1.x - it2.x;
-                    let dy = it1.y - it2.y;
-                    let dist = Math.hypot(dx, dy);
-                    let minDist = 40;
+            // アイテム同士の簡易反発（数が少ないときだけ）
+            if (items.length <= 8) {
+                for (let i = 0; i < items.length; i++) {
+                    for (let j = i + 1; j < items.length; j++) {
+                        let it1 = items[i];
+                        let it2 = items[j];
+                        let dx = it1.x - it2.x;
+                        let dy = it1.y - it2.y;
+                        let dist = Math.hypot(dx, dy);
+                        let minDist = 40;
 
-                    if (dist < minDist) {
-                        let angle = Math.atan2(dy, dx);
-                        let overlap = minDist - dist;
-                        let moveX = Math.cos(angle) * overlap * 0.5;
-                        let moveY = Math.sin(angle) * overlap * 0.5;
-                        it1.x += moveX;
-                        it1.y += moveY;
-                        it2.x -= moveX;
-                        it2.y -= moveY;
+                        if (dist < minDist) {
+                            let angle = Math.atan2(dy, dx);
+                            let overlap = minDist - dist;
+                            let moveX = Math.cos(angle) * overlap * 0.5;
+                            let moveY = Math.sin(angle) * overlap * 0.5;
+                            it1.x += moveX;
+                            it1.y += moveY;
+                            it2.x -= moveX;
+                            it2.y -= moveY;
 
-                        let speed1 = Math.hypot(it1.vx, it1.vy);
-                        let speed2 = Math.hypot(it2.vx, it2.vy);
-                        let avgSpeed = (speed1 + speed2) * 0.5 + 1;
-                        it1.vx = Math.cos(angle) * avgSpeed;
-                        it1.vy = Math.sin(angle) * avgSpeed;
-                        it2.vx = -Math.cos(angle) * avgSpeed;
-                        it2.vy = -Math.sin(angle) * avgSpeed;
+                            let speed1 = Math.hypot(it1.vx, it1.vy);
+                            let speed2 = Math.hypot(it2.vx, it2.vy);
+                            let avgSpeed = (speed1 + speed2) * 0.5 + 1;
+                            it1.vx = Math.cos(angle) * avgSpeed;
+                            it1.vy = Math.sin(angle) * avgSpeed;
+                            it2.vx = -Math.cos(angle) * avgSpeed;
+                            it2.vy = -Math.sin(angle) * avgSpeed;
+                        }
                     }
                 }
             }
@@ -840,6 +852,13 @@
                 t.life--;
                 if (t.life <= 0) floatingTexts.splice(i, 1);
             }
+
+            // 上限チェック（保険）
+            if (items.length > MAX_ITEMS) items.length = MAX_ITEMS;
+            if (enemies.length > MAX_ENEMIES) enemies.length = MAX_ENEMIES;
+            if (cactusList.length > MAX_CACTUS) cactusList.length = MAX_CACTUS;
+            if (particles.length > MAX_PARTICLES) particles.length = MAX_PARTICLES;
+            if (floatingTexts.length > MAX_FLOAT_TEXTS) floatingTexts.length = MAX_FLOAT_TEXTS;
         }
 
         function draw() {
@@ -855,7 +874,7 @@
             ctx.lineTo(width, GROUND_Y());
             ctx.stroke();
 
-            // ヒヨコ (画像描画)
+            // ヒヨコ
             chicks.forEach((c) => {
                 if (c.state === "waiting") return;
 
@@ -902,7 +921,7 @@
             // プレイヤー
             drawPlayer();
 
-            // 食べ物・おにぎり・唐辛子
+            // 食べ物
             items.forEach((it) => {
                 ctx.save();
                 ctx.translate(it.x, it.y);
@@ -942,6 +961,9 @@
         }
 
         function spawnItem() {
+            // 上限
+            if (items.length >= MAX_ITEMS) return;
+
             const rand = Math.random();
             let type, emoji;
 
@@ -971,11 +993,13 @@
                 rot: 0,
                 rotSpeed: (Math.random() - 0.5) * 0.1,
                 type: type,
-                emoji: emoji,
+                emoji: emoji
             });
         }
 
         function spawnEnemy() {
+            if (enemies.length >= MAX_ENEMIES) return;
+
             const isLeft = Math.random() > 0.5;
             const startX = isLeft ? -50 : width + 50;
             const speed = isLeft ? Math.random() * 2 + 2 : -(Math.random() * 2 + 2);
@@ -989,7 +1013,7 @@
                     baseY: GROUND_Y(),
                     vx: speed * 1.5,
                     vy: 0,
-                    life: 600,
+                    life: 600
                 });
             } else {
                 const beeY = GROUND_Y() - 70;
@@ -1001,12 +1025,14 @@
                     baseY: beeY + Math.random() * 20,
                     vx: speed,
                     vy: 0,
-                    life: 600,
+                    life: 600
                 });
             }
         }
 
         function spawnCactus() {
+            if (cactusList.length >= MAX_CACTUS) return;
+
             const x = Math.random() * (width - 100) + 50;
             cactusList.push({
                 x: x,
@@ -1014,7 +1040,7 @@
                 emoji: "🌵",
                 life: 300,
                 scale: 0,
-                state: "growing",
+                state: "growing"
             });
         }
 
@@ -1118,30 +1144,6 @@
             ctx.strokeStyle = "#333";
             ctx.lineWidth = 1;
             ctx.strokeRect(barX, barY, barW, barH);
-        }
-
-        function createParticles(x, y, count, color) {
-            for (let i = 0; i < count; i++) {
-                particles.push({
-                    x: x,
-                    y: y,
-                    vx: (Math.random() - 0.5) * 6,
-                    vy: (Math.random() - 0.5) * 6,
-                    life: 20,
-                    color: color,
-                    size: Math.random() * 3 + 1,
-                });
-            }
-        }
-
-        function showFloatText(x, y, text, color) {
-            floatingTexts.push({
-                x: x,
-                y: y,
-                text: text,
-                color: color,
-                life: 50,
-            });
         }
 
         // 簡単なテスト
