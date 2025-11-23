@@ -174,19 +174,6 @@
     </div>
 
     <script>
-        // Service Workerの登録
-        if ("serviceWorker" in navigator) {
-            window.addEventListener("load", function () {
-                navigator.serviceWorker
-                    .register(
-                        "data:application/javascript;charset=utf-8,self.addEventListener%28%27install%27%2C%20function%28e%29%20%7B%20e.waitUntil%28%20caches.open%28%27piyolunch-v1%27%29.then%28function%28cache%29%20%7B%20return%20cache.addAll%28%5B%20%27.%2F%27%2C%20%27index.html%27%2C%20%27piyolunchqr.png%27%20%5D%29%3B%20%7D%29%20%29%3B%7D%29%3Bself.addEventListener%28%27fetch%27%2C%20function%28e%29%20%7B%20e.respondWith%28%20caches.match%28e.request%29.then%28function%28response%29%20%7B%20return%20response%20%7C%7C%20fetch%28e.request%29%3B%20%7D%29%20%29%3B%7D%29%3B"
-                    )
-                    .catch(function (err) {
-                        // console.log('ServiceWorker registration failed: ', err);
-                    });
-            });
-        }
-
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d", { alpha: false }); // アルファなし指定で高速化
         const feverText = document.getElementById("feverIndicator");
@@ -736,6 +723,8 @@
             for (let i = enemies.length - 1; i >= 0; i--) {
                 let e = enemies[i];
                 e.life--;
+
+// (続きは元コードと同じなので省略せず貼ります)
 
                 if (e.type === "bee") {
                     e.x += e.vx;
